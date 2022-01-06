@@ -9,7 +9,7 @@ class TrainConfig:
     def __init__(self):
         # optimizer
         self.lr_policy = 'fixed'
-        self.learning_rate = 2e-4        
+        self.learning_rate = 0.0005 
         # self.lr_policy = 'noam'
         # self.learning_rate = 1
         # self.lr_params = {
@@ -22,14 +22,14 @@ class TrainConfig:
         self.eps = 1e-9
 
         # 13000:100
-        self.split = 13000
+        self.split = 5250
         self.bufsiz = 48
 
         self.epoch = 10000
 
         # path config
-        self.log = './log'
-        self.ckpt = './ckpt'
+        self.log = '/mnt/md1/genis/diffwave_experiments/log'
+        self.ckpt = '/mnt/md1/genis/diffwave_experiments/ckpt'
 
         # model name
         self.name = 'l1'

@@ -20,7 +20,7 @@ class DiffWave(tf.keras.Model):
     def call(self, mel, noise=None):
         """Generate denoised audio.
         Args:
-            mel: tf.Tensor, [B, T // hop, M], conditonal mel-spectrogram.
+            mel: tf.Tensor, TODO
             noise: Optional[tf.Tensor], [B, T], starting noise.
         Returns:
             tuple,
@@ -28,8 +28,8 @@ class DiffWave(tf.keras.Model):
                 ir: List[np.ndarray: [B, T]], intermediate outputs.
         """
         if noise is None:
-            # [B, T // hop, M]
-            b, t, _ = tf.shape(mel)
+            # [B, fft, T // hop, 1]
+            b, _, t, _ = tf.shape(mel)
             # [B, T]
             noise = tf.random.normal([b, t * self.config.hop])
 
