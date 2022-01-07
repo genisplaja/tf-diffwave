@@ -17,10 +17,10 @@ class DiffWave(tf.keras.Model):
         self.config = config
         self.wavenet = WaveNet(config)
 
-    def call(self, mel, noise=None):
+    def call(self, mel, noise=None, eval=False):
         """Generate denoised audio.
         Args:
-            mel: tf.Tensor, [B, T // hop, M], conditonal mel-spectrogram.
+            mel: tf.Tensor, TODO
             noise: Optional[tf.Tensor], [B, T], starting noise.
         Returns:
             tuple,
@@ -28,10 +28,16 @@ class DiffWave(tf.keras.Model):
                 ir: List[np.ndarray: [B, T]], intermediate outputs.
         """
         if noise is None:
-            # [B, T // hop, M]
-            b, t, _ = tf.shape(mel)
-            # [B, T]
-            noise = tf.random.normal([b, t * self.config.hop])
+            if eval:
+                b, t, _ = tf.shape(mel)
+                noise = tf.random.normal([1, t * b * self.config.hop])
+            else:
+                # [B, fft, T // hop, 1]
+                b, t, _ = tf.shape(mel)
+                #b, _, t, _ = tf.shape(mel)
+                # [B, T]
+                noise = tf.random.normal([b, t * self.config.hop])
+                #noise = tf.random.normal([b, t * self.config.hop])
 
         # [iter]
         alpha = 1 - self.config.beta()
@@ -42,7 +48,7 @@ class DiffWave(tf.keras.Model):
         ir, signal = [], noise
         for t in range(self.config.iter, 0, -1):
             # [B, T]
-            eps = self.pred_noise(signal, base * t, mel)
+            eps = self.pred_noise(signal, base * t, mel, eval)
             # [B, T], []
             mu, sigma = self.pred_signal(signal, eps, alpha[t - 1], alpha_bar[t - 1])
             # [B, T]
@@ -68,7 +74,7 @@ class DiffWave(tf.keras.Model):
             alpha_bar = alpha_bar[:, None]
         return tf.sqrt(alpha_bar) * signal + tf.sqrt(1 - alpha_bar) * eps, eps
 
-    def pred_noise(self, signal, timestep, mel):
+    def pred_noise(self, signal, timestep, mel, eval=False):
         """Predict noise from signal.
         Args:
             signal: tf.Tensor, [B, T], noised signal.
@@ -77,7 +83,7 @@ class DiffWave(tf.keras.Model):
         Returns:
             tf.Tensor, [B, T], predicted noise.
         """
-        return self.wavenet(signal, timestep, mel)
+        return self.wavenet(signal, timestep, mel, eval)
 
     def pred_signal(self, signal, eps, alpha, alpha_bar):
         """Compute mean and stddev of denoised signal.

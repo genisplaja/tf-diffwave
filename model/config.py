@@ -1,10 +1,34 @@
 import numpy as np
 
+from .unet_config import config as unet_config
+
 
 class Config:
     """Configuration for DiffWave implementation.
     """
     def __init__(self):
+        self.sr = 22050
+
+        # stft
+        self.hop = 128
+        self.win = 1024
+        self.fft = self.win
+        self.win_fn = 'hann'
+
+        # mel-scale filter bank
+        self.mel = 80
+        self.fmin = 0
+        self.fmax = 8000
+
+        self.eps = 1e-5
+
+        # unet config
+        #self.unet_input_shape = unet_config.INPUT_SHAPE  # freq = 512, time = 128
+
+        # sample size
+        self.frames = 8192
+        self.batch = 8
+
         # leaky relu coefficient
         self.leak = 0.4
 
@@ -15,9 +39,9 @@ class Config:
         self.embedding_factor = 4
 
         # upsampler config
-        self.upsample_stride = [16, 1]
+        self.upsample_stride = [2, 1]
         self.upsample_kernel = [32, 3]
-        self.upsample_layers = 2
+        self.upsample_layers = 7
         # computed hop size
         self.hop = self.upsample_stride[0] ** self.upsample_layers
 

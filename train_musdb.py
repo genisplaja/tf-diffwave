@@ -6,11 +6,16 @@ import matplotlib.pyplot as plt
 import numpy as np
 import tensorflow as tf
 import tqdm
+import math
+import soundfile as sf
 
 from config import Config
-from dataset import LJSpeech
+from dataset.musdb_3sec import MUSDB_3SEC
 from model import DiffWave
 
+#os.environ["TF_GPU_ALLOCATOR"] = "cuda_malloc_async"
+
+DATA_DIR =  '/mnt/md1/genis/musdb18hq/3-sec-subset/'
 
 class Trainer:
     """WaveGrad trainer.
@@ -84,20 +89,24 @@ class Trainer:
             step: int, starting step.
             ir_unit: int, log ir units.
         """
+        count = 1
         for _ in tqdm.trange(step // self.split, self.config.train.epoch):
+            train_loss = []
+            grad_mean = []
             with tqdm.tqdm(total=self.split, leave=False) as pbar:
-                for signal, logmel in self.trainset:
+                for logmel, signal in self.trainset:
+                    #logmel = tf.transpose(logmel, [0, 3, 1, 2])
                     with tf.GradientTape() as tape:
-                        print(signal.shape)
-                        print(logmel.shape)
                         tape.watch(self.model.trainable_variables)
                         loss = self.compute_loss(signal, logmel)
+                        train_loss.append(loss)
 
                     grad = tape.gradient(loss, self.model.trainable_variables)
                     self.optim.apply_gradients(
                         zip(grad, self.model.trainable_variables))
 
                     norm = tf.reduce_mean([tf.norm(g) for g in grad])
+                    grad_mean.append(norm)
                     del grad
 
                     step += 1
@@ -114,9 +123,6 @@ class Trainer:
                             pred, _ = self.model(logmel)
                             tf.summary.audio(
                                 'train', pred[..., None], self.config.data.sr, step)
-                            tf.summary.image(
-                                'train mel', self.mel_img(pred), step)
-
                             del pred
 
                     if step % self.ckpt_intval == 0:
@@ -124,53 +130,42 @@ class Trainer:
                             '{}_{}.ckpt'.format(self.ckpt_path, step),
                             self.optim)
 
-            loss = [
-                self.compute_loss(signal, logmel).numpy().item()
-                for signal, logmel in self.testset
-            ]
+            train_loss = sum(train_loss) / len(train_loss)
+            grad_mean = sum(grad_mean) / len(grad_mean)
+            print('Train loss:', train_loss)
+            print('Grad:', grad_mean)
+
+            loss = []
+            for logmel, signal in self.testset:
+                #logmel = tf.transpose(logmel, [0, 3, 1, 2])
+                actual_loss = self.compute_loss(signal, logmel).numpy().item()
+                loss.append(actual_loss)
+                
             loss = sum(loss) / len(loss)
+            print('Eval loss:', loss)
             with self.test_log.as_default():
                 tf.summary.scalar('loss', loss, step)
 
-                gt, pred, ir = self.eval()
+                mix_gt, voc_gt, pred, ir = self.eval()
                 tf.summary.audio(
-                    'gt', gt[None, :, None], self.config.data.sr, step)
+                    'gt', voc_gt[None, :, None], self.config.data.sr, step)
                 tf.summary.audio(
                     'eval', pred[None, :, None], self.config.data.sr, step)
 
-                tf.summary.image(
-                    'gt mel', self.mel_img(gt[None]), step)
-                tf.summary.image(
-                    'eval mel', self.mel_img(pred[None]), step)
-
+                filename = '/home/genis/tf-diffwave/sounds/iter_' + str(count) + '.wav'
+                sf.write(filename, pred, 22050)
+                if count == 1:
+                    sf.write(filename.replace('iter', 'gt_iter'), voc_gt, 22050)
+                
                 for i in range(0, len(ir), ir_unit):
                     tf.summary.audio(
                         'ir_{}'.format(i),
                         np.clip(ir[i][None, :, None], -1., 1.),
                         self.config.data.sr, step)
                 
-                del gt, pred, ir
-
-    def mel_img(self, signal):
-        """Generate mel-spectrogram images.
-        Args:
-            signal: tf.Tensor, [B, T], speech signal.
-        Returns:
-            tf.Tensor, [B, mel, T // hop, 3], mel-spectrogram in viridis color map.
-        """
-        # [B, T // hop, mel]
-        _, mel = self.lj.mel_fn(signal)
-        # [B, mel, T // hop]
-        mel = tf.transpose(mel, [0, 2, 1])
-        # minmax norm in range(0, 1)
-        mel = (mel - tf.reduce_min(mel)) / (tf.reduce_max(mel) - tf.reduce_min(mel))
-        # in range(0, 255)
-        mel = tf.cast(mel * 255, tf.int32)
-        # [B, mel, T // hop, 3]
-        mel = tf.gather(self.cmap, mel)
-        # make origin lower
-        mel = tf.image.flip_up_down(mel)
-        return mel
+                del mix_gt, voc_gt, pred, ir
+            
+            count += 1 
 
     def eval(self):
         """Generate evaluation purpose audio.
@@ -181,16 +176,50 @@ class Trainer:
                 intermediate represnetations.
         """
         # [T]
-        speech = next(iter(lj.rawset))
+        logmel, mixture, speech = next(iter(lj.validation()))
         # [1, T // hop, mel]
-        _, logmel = lj.mel_fn(speech[None])
+        logmel = tf.squeeze(logmel, axis=1)
         # [1, T], iter x [1, T]
-        pred, ir = self.model(logmel)
+        pred, ir = self.model(logmel, eval=True)
         # [T]
         pred = tf.squeeze(pred, axis=0).numpy()
         # config.model.iter x [T]
         ir = [np.squeeze(i, axis=0) for i in ir]
-        return speech.numpy(), pred, ir
+        mixture = tf.squeeze(mixture, axis=0).numpy()
+        speech = tf.squeeze(speech, axis=0).numpy()
+
+        return mixture, speech, pred, ir
+
+    @staticmethod
+    def prepare_a_song(spec, num_frames, num_bands):
+        size = spec.shape[1]
+
+        segments = np.zeros(
+            (size//(num_frames)+1, num_bands, num_frames, 1),
+            dtype=np.float32)
+
+        for index, i in enumerate(np.arange(0, size, num_frames)):
+            segment = spec[:num_bands, i:i+num_frames]
+            tmp = segment.shape[1]
+
+            if tmp != num_frames:
+                segment = np.zeros((num_bands, num_frames), dtype=np.float32)
+                segment[:, :tmp] = spec[:num_bands, i:i+num_frames]
+
+            segments[index] = np.expand_dims(segment, axis=2)
+
+        return segments
+
+    @staticmethod
+    def concatenate(data, shape):
+        output = np.array([])
+        output = np.concatenate(data, axis=1)
+        
+        if shape[0] % 2 != 0:
+            # duplicationg the last bin for odd input mag
+            output = np.vstack((output, output[-1:, :]))
+        return output
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -216,7 +245,7 @@ if __name__ == '__main__':
     if not os.path.exists(ckpt_path):
         os.makedirs(ckpt_path)
 
-    lj = LJSpeech(config.data, args.data_dir, args.download, not args.from_raw)
+    lj = MUSDB_3SEC(config.data, data_dir=DATA_DIR)
     diffwave = DiffWave(config.model)
     trainer = Trainer(diffwave, lj, config)
 

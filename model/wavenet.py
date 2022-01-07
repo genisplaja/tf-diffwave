@@ -1,4 +1,9 @@
 import tensorflow as tf
+from .unet_tf import UnetConditioner
+
+import librosa
+import math
+import numpy as np
 
 
 class DilatedConv1d(tf.keras.layers.Layer):
@@ -107,6 +112,8 @@ class WaveNet(tf.keras.Model):
         self.proj_embed = [
             tf.keras.layers.Dense(config.embedding_proj)
             for _ in range(config.embedding_layers)]
+        # incorporating unet
+        self.unet_conditioner = UnetConditioner()
         # mel-upsampler
         self.upsample = [
             tf.keras.layers.Conv2DTranspose(
@@ -131,12 +138,17 @@ class WaveNet(tf.keras.Model):
             tf.keras.layers.Conv1D(config.channels, 1, activation=tf.nn.relu),
             tf.keras.layers.Conv1D(1, 1)]
 
-    def call(self, signal, timestep, mel):
+        # convert from spec to melfilt
+        melfilter = librosa.filters.mel(
+            22050, config.fft, config.mel, config.fmin, config.fmax).T
+        self.melfilter = tf.convert_to_tensor(melfilter[:-1, :])
+
+    def call(self, signal, timestep, mel, eval=False):
         """Generate output signal.
         Args:
             signal: tf.Tensor, [B, T], noised signal.
             timestep: tf.Tensor, [B], int, timesteps of current markov chain.
-            mel: tf.Tensor, [B, T // hop, M], mel-spectrogram.
+            spec: tf.Tensor, TODO
         Returns:
             tf.Tensor, [B, T], generated.
         """
@@ -148,11 +160,34 @@ class WaveNet(tf.keras.Model):
         for proj in self.proj_embed:
             embed = tf.nn.swish(proj(embed))
         # [B, T, M, 1], treat as 2D tensor.
+
+        # passing spec through unet network...
+        # [B, fft, T // hop]
+        #print('spec', spec.shape)
+        if eval:
+            mel = tf.transpose(mel, [0, 2, 1])
         mel = mel[..., None]
+        mel =  self.unet_conditioner(mel)
+        if eval:
+            mel = tf.reshape(mel, [1, mel.shape[0]*64, 80, 1])
+        #print('estimation', estimation.shape)
+        # [B, T // hop, ftt // 2]
+        #estimation = tf.transpose(estimation, [0, 2, 1])
+        #print('estimation trans', estimation.shape)
+        # [B, T // hop, mel], [fft // 2, mel]
+        #mel = estimation @ self.melfilter
+        #print('mel', mel.shape)
+        # [B, T // hop, mel]
+        #mel = tf.math.log(tf.maximum(mel, self.config.eps))
+        #print('mel log', mel.shape)
+        # Add dimension
+        #mel = mel[..., None]
+        #print('mel add dim', mel.shape)
         for upsample in self.upsample:
             mel = tf.nn.leaky_relu(upsample(mel), self.config.leak)
         # [B, T, M]
         mel = tf.squeeze(mel, axis=-1)
+        #print('mel upsample', mel.shape)
 
         context = []
         for block in self.blocks:
