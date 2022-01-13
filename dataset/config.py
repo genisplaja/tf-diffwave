@@ -1,21 +1,25 @@
 import tensorflow as tf
 
-from .ljspeech import LJSpeech
-
-
 class Config:
     """Configuration for dataset construction.
     """
     def __init__(self):
         # audio config
-        self.sr = LJSpeech.SR
-        self.maxval = LJSpeech.MAXVAL
+        self.sr = 22050
 
         # stft
-        self.hop = 256
+        self.hop = 64
         self.win = 1024
         self.fft = self.win
         self.win_fn = 'hann'
+
+        # path to files
+        self.path_base = '/mnt/md1/genis/musdb18hq/'
+        self.path_spec = '/mnt/md1/genis/musdb18hq/train/complex/'
+        self.path_audio = '/mnt/md1/genis/musdb18hq/train/raw_audio/'
+
+        # model input shape
+        self.unet_input_shape = [512, 128, 1]
 
         # mel-scale filter bank
         self.mel = 80
@@ -25,8 +29,8 @@ class Config:
         self.eps = 1e-5
 
         # sample size
-        self.frames = 6400  # 16000
-        self.batch = 8      # 16
+        self.frames = int(self.unet_input_shape[1] * self.hop)  # 16000
+        self.batch = 8
 
     def window_fn(self):
         """Return window generator.
