@@ -11,6 +11,8 @@ from config import Config
 from dataset import LJSpeech
 from model import DiffWave
 
+from dataset.spec_utils import preprocess_spec
+
 
 class Trainer:
     """WaveGrad trainer.
@@ -59,6 +61,7 @@ class Trainer:
         Args:
             signal: tf.Tensor, [B, T], raw audio signal segment.
             logmel: tf.Tensor, [B, T // hop, mel], mel-spectrogram.
+            T // hop --> num frames
         Returns:
             loss: tf.Tensor, [], L1-loss between noise and estimation.
         """
@@ -87,6 +90,8 @@ class Trainer:
             with tqdm.tqdm(total=self.split, leave=False) as pbar:
                 for signal, logmel in self.trainset:
                     with tf.GradientTape() as tape:
+                        print(signal.shape)
+                        print(logmel.shape)
                         tape.watch(self.model.trainable_variables)
                         loss = self.compute_loss(signal, logmel)
 
