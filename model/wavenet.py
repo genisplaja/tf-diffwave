@@ -1,4 +1,7 @@
 import tensorflow as tf
+from tensorflow.keras import layers
+from .control_models import CNNControl
+from .unet_config import config as unet_config
 
 
 class DilatedConv1d(tf.keras.layers.Layer):
@@ -40,6 +43,81 @@ class DilatedConv1d(tf.keras.layers.Layer):
         return conv + self.bias
 
 
+class UnetConvBlock(tf.keras.Model):
+    def __init__(self, n_filters, initializer, activation, kernel_size=(5, 5), strides=(2, 2), padding='same'):
+        super(UnetConvBlock, self).__init__()
+        self.n_filters=n_filters
+        self.initializer=initializer
+        self.activation=activation
+        self.kernel_size=kernel_size
+        self.strides=strides
+        self.padding=padding
+
+        self.conv2d = layers.Conv2D(
+            filters=n_filters,
+            kernel_size=(5, 5),
+            padding=padding,
+            strides=(2, 2),
+            kernel_initializer=initializer)
+        self.batch_norm_encoder = layers.BatchNormalization(momentum=0.9, scale=True)
+        self.activation_encoder = self._get_activation(activation)
+
+    def call(self, inputs):
+        x = inputs
+        x = self.conv2d(x)
+        x = self.batch_norm_encoder(x)
+        x = self.activation_encoder(x)
+        return x
+
+    @staticmethod
+    def _get_activation(name):
+        if name == 'leaky_relu':
+            return layers.LeakyReLU(alpha=0.2)
+        return tf.keras.layers.Activation(name)
+
+
+class UnetUpconvBlock(tf.keras.Model):
+    def __init__(self, n_filters, initializer, activation, dropout, skip, kernel_size=(5, 5), strides=(2, 2), padding='same'):
+        super(UnetUpconvBlock, self).__init__()
+        self.n_filters=n_filters
+        self.initializer=initializer
+        self.activation=activation
+        self.dropout=dropout
+        self.skip=skip
+        self.kernel_size=kernel_size
+        self.strides=strides
+        self.padding=padding
+
+        if self.skip:
+             self.concatenate_decoder = layers.Concatenate(axis=3)
+        self.deconv = layers.Conv2DTranspose(
+            n_filters,
+            kernel_size=kernel_size,
+            padding=padding,
+            strides=strides,
+            kernel_initializer=initializer)
+        self.batch_norm = layers.BatchNormalization(momentum=0.9, scale=True)
+        if self.dropout:
+            self.dropout_decoder = layers.Dropout(0.5)
+        self.activation_decoder = self._get_activation(activation)
+
+    def call(self, x, x_encoder):
+        if self.skip:
+            x = self.concatenate_decoder([x, x_encoder])
+        x = self.deconv(x)
+        x = self.batch_norm(x)
+        if self.dropout:
+            x = self.dropout_decoder(x)
+        x = self.activation_decoder(x)
+        return x
+
+    @staticmethod
+    def _get_activation(name):
+        if name == 'leaky_relu':
+            return layers.LeakyReLU(alpha=0.2)
+        return tf.keras.layers.Activation(name)
+
+
 class Block(tf.keras.Model):
     """WaveNet Block.
     """
@@ -58,13 +136,15 @@ class Block(tf.keras.Model):
         self.proj_embed = tf.keras.layers.Dense(channels)
         self.conv = DilatedConv1d(
             channels, channels * 2, kernel_size, dilation)
-        self.proj_mel = tf.keras.layers.Conv1D(channels * 2, 1)
+        self.cnn_control = CNNControl(
+            n_conditions=channels, n_filters=unet_config.N_FILTERS)
+        self.proj_cond = tf.keras.layers.Conv1D(channels * 2, 1)
 
         if not last:
             self.proj_res = tf.keras.layers.Conv1D(channels, 1)
         self.proj_skip = tf.keras.layers.Conv1D(channels, 1)
 
-    def call(self, inputs, embedding, mel):
+    def call(self, inputs, embedding, cond=None):
         """Pass wavenet block.
         Args:
             inputs: tf.Tensor, [B, T, C(=channels)], input tensor.
@@ -79,7 +159,11 @@ class Block(tf.keras.Model):
         # [B, T, C]
         x = inputs + embedding[:, None]
         # [B, T, Cx2]
-        x = self.conv(x) + self.proj_mel(mel)
+        #
+        #_, gammas, betas = self.cnn_control(cond)
+        #x = self.FiLM_complex_layer()([x, gammas, betas])
+        x = self.conv(x)
+        #x = self.conv(x) + self.proj_cond(cond)
         # [B, T, C]
         context = tf.math.tanh(x[..., :self.channels])
         gate = tf.math.sigmoid(x[..., self.channels:])
@@ -88,6 +172,21 @@ class Block(tf.keras.Model):
         residual = (self.proj_res(x) + inputs) / 2 ** 0.5 if not self.last else None
         skip = self.proj_skip(x)
         return residual, skip
+
+    @staticmethod
+    def FiLM_complex_layer():
+        """multiply scalar to a tensor"""
+        def func(args):
+            x, gamma, beta = args
+            s = list(x.shape)
+            s[0] = 1
+            # avoid tile with the num of batch -> it is the same for both tensors
+            # g = tf.tile(tf.expand_dims(gamma, 2), s)
+            # b = tf.tile(tf.expand_dims(beta, 2), s)
+            g = tf.expand_dims(tf.transpose(gamma, [0, 2, 1]), -1)
+            b = tf.expand_dims(tf.transpose(beta, [0, 2, 1]), -1)
+            return tf.add(b, tf.multiply(x, g))
+        return layers.Lambda(func)
 
 
 class WaveNet(tf.keras.Model):
@@ -125,18 +224,18 @@ class WaveNet(tf.keras.Model):
                     config.channels,
                     config.kernel_size,
                     dilation,
-                    last=i == config.num_layers - 1))  
+                    last=i == config.num_layers - 1))
         # for output
         self.proj_out = [
             tf.keras.layers.Conv1D(config.channels, 1, activation=tf.nn.relu),
             tf.keras.layers.Conv1D(1, 1)]
 
-    def call(self, signal, timestep, mel):
+    def call(self, signal, timestep, cond=None):
         """Generate output signal.
         Args:
             signal: tf.Tensor, [B, T], noised signal.
             timestep: tf.Tensor, [B], int, timesteps of current markov chain.
-            mel: tf.Tensor, [B, T // hop, M], mel-spectrogram.
+            spec: tf.Tensor, TODO
         Returns:
             tf.Tensor, [B, T], generated.
         """
@@ -148,17 +247,24 @@ class WaveNet(tf.keras.Model):
         for proj in self.proj_embed:
             embed = tf.nn.swish(proj(embed))
         # [B, T, M, 1], treat as 2D tensor.
-        mel = mel[..., None]
-        for upsample in self.upsample:
-            mel = tf.nn.leaky_relu(upsample(mel), self.config.leak)
-        # [B, T, M]
-        mel = tf.squeeze(mel, axis=-1)
+        # Add dimension
+        if cond:
+            cond = cond[..., None]
+            #print('mel add dim', mel.shape)
+            for upsample in self.upsample:
+                cond = tf.nn.leaky_relu(upsample(cond), self.config.leak)
+            # [B, T, M]
+            cond = tf.squeeze(cond, axis=-1)
 
         context = []
         for block in self.blocks:
             # [B, T, C], [B, T, C]
-            x, skip = block(x, embed, mel)
-            context.append(skip)
+            if cond:
+                x, skip = block(x, embed, cond)
+                context.append(skip)
+            else:
+                x, skip = block(x, embed)
+                context.append(skip)
         # [B, T, C]
         scale = self.config.num_layers ** 0.5
         context = tf.reduce_sum(context, axis=0) / scale
