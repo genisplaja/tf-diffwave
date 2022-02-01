@@ -1,5 +1,11 @@
+import math
+from sklearn import gaussian_process
+import tqdm
+import timeit
+import random
 import numpy as np
 import tensorflow as tf
+import pdb
 
 from .wavenet import WaveNet
 
@@ -17,41 +23,34 @@ class DiffWave(tf.keras.Model):
         self.config = config
         self.wavenet = WaveNet(config)
 
-    def call(self, mel, noise=None):
+    def call(self, mixture, cond=None):
         """Generate denoised audio.
         Args:
-            mel: tf.Tensor, [B, T // hop, M], conditonal mel-spectrogram.
+            mel: tf.Tensor, TODO
             noise: Optional[tf.Tensor], [B, T], starting noise.
         Returns:
             tuple,
                 signal: tf.Tensor, [B, T], predicted output.
                 ir: List[np.ndarray: [B, T]], intermediate outputs.
         """
-        if noise is None:
-            # [B, T // hop, M]
-            b, t, _ = tf.shape(mel)
-            # [B, T]
-            noise = tf.random.normal([b, t * self.config.hop])
-
-        # [iter]
-        alpha = 1 - self.config.beta()
+        alpha = 1 - self.config.beta
         alpha_bar = np.cumprod(alpha)
-        # [B]
-        base = tf.ones([tf.shape(noise)[0]], dtype=tf.int32)
+        base = tf.ones([tf.shape(mixture)[0]], dtype=tf.int32)
 
-        ir, signal = [], noise
+        ir, signal = [], mixture
         for t in range(self.config.iter, 0, -1):
             # [B, T]
-            eps = self.pred_noise(signal, base * t, mel)
+            eps = self.pred_noise(signal, base * t, cond)
             # [B, T], []
             mu, sigma = self.pred_signal(signal, eps, alpha[t - 1], alpha_bar[t - 1])
+            #signal = tf.subtract(signal, eps)
             # [B, T]
             signal = mu + tf.random.normal(tf.shape(signal)) * sigma
             ir.append(signal.numpy())
         # [B, T], iter x [B, T]
         return signal, ir
 
-    def diffusion(self, signal, alpha_bar, eps=None):
+    def diffusion(self, vocals, accomp, alpha, alpha_bar):
         """Trans to next state with diffusion process.
         Args:
             signal: tf.Tensor, [B, T], signal.
@@ -62,13 +61,124 @@ class DiffWave(tf.keras.Model):
                 noised: tf.Tensor, [B, T], noised signal.
                 eps: tf.Tensor, [B, T], noise.
         """
-        if eps is None:
-            eps = tf.random.normal(tf.shape(signal))
-        if isinstance(alpha_bar, tf.Tensor):
-            alpha_bar = alpha_bar[:, None]
-        return tf.sqrt(alpha_bar) * signal + tf.sqrt(1 - alpha_bar) * eps, eps
+        conditioning = lambda v, w, x, y : self.time_diffusion(v, w, x, y)
+        diff = list(map(conditioning, vocals, accomp, alpha, alpha_bar))
+        return np.array(diff)[:, 0, :], np.array(diff)[:, 1, :]
+        
+    def sample_diffusion(self, vocals, accomp, alpha):
+        """Trans to next state with diffusion process.
+        Args:
+            signal: tf.Tensor, [B, T], signal.
+            alpha_bar: Union[float, tf.Tensor: [B]], cumprod(1 -beta).
+            eps: Optional[tf.Tensor: [B, T]], noise.
+        Return:
+            tuple,
+                noised: tf.Tensor, [B, T], noised signal.
+                eps: tf.Tensor, [B, T], noise.
+        """
+        accomp_spec = tf.signal.stft(
+            accomp,
+            frame_length=self.config.cond_win,
+            frame_step=self.config.cond_hop,
+            fft_length=self.config.cond_win,
+            window_fn=tf.signal.hann_window)
+        orig_shape = accomp_spec.shape
+        accomp_spec = tf.reshape(accomp_spec, orig_shape[0]*orig_shape[1])
+        mask = np.zeros(orig_shape[0]*orig_shape[1], dtype='complex')
+        # Obtaining sampling mask
+        samples = list(random.sample(
+            list(np.arange(orig_shape[0]*orig_shape[1])),
+            int(math.floor((orig_shape[0]*orig_shape[1])/self.config.iter) * alpha)))
+        for idx in samples:
+            mask[idx] = 1.0 + 1.0j
+        # Getting sampled accomp spec
+        accomp = tf.reshape(tf.math.multiply(accomp_spec, mask), orig_shape)
+        # Reconvert to time domain
+        accomp = tf.signal.inverse_stft(
+            accomp,
+            frame_length=self.config.cond_win,
+            frame_step=self.config.cond_hop,
+            window_fn=tf.signal.inverse_stft_window_fn(
+                self.config.cond_hop,
+                forward_window_fn=tf.signal.hann_window))
+        # Adding noise (accomp) to vocals
+        noised_voc = tf.add(vocals, accomp)
+        return noised_voc, accomp
 
-    def pred_noise(self, signal, timestep, mel):
+    def soft_diffusion(self, vocals, accomp, noise_idx, alpha, alpha_bar):
+        """Trans to next state with diffusion process.
+        Args:
+            signal: tf.Tensor, [B, T], signal.
+            alpha_bar: Union[float, tf.Tensor: [B]], cumprod(1 -beta).
+            eps: Optional[tf.Tensor: [B, T]], noise.
+        Return:
+            tuple,
+                noised: tf.Tensor, [B, T], noised signal.
+                eps: tf.Tensor, [B, T], noise.
+        """
+        stddev = np.sqrt((1 - alpha_bar / alpha) / (1 - alpha_bar) * (1 - alpha))
+        accomp_spec = tf.signal.stft(
+            accomp,
+            frame_length=self.config.cond_win,
+            frame_step=self.config.cond_hop,
+            fft_length=self.config.cond_win,
+            window_fn=tf.signal.hann_window)
+        # Getting mag and phase
+        accomp_mag = tf.abs(accomp_spec)
+        accomp_phase = tf.math.angle(accomp_spec)
+        orig_shape = accomp_mag.shape
+        # Flatenning spec
+        accomp_mag = tf.reshape(accomp_mag, orig_shape[0]*orig_shape[1])
+        accomp_phase = tf.reshape(accomp_phase, orig_shape[0]*orig_shape[1])
+        #approximately how would the average spectrogram look at each step
+        spec_average = accomp_mag.numpy()/self.config.iter
+        estimate = tf.zeros(orig_shape[0]*orig_shape[1])
+
+        gaussian_function = lambda x : random.gauss(x, stddev)
+        for _ in range(noise_idx):
+            #generate an estimate around the average, the standard deviation controls the amount of noise
+            #estimate += np.array([random.gauss(spec_average[i],spec_average[i]/self.config.noise_ratio) \
+            #    for i in range(orig_shape[0]*orig_shape[1])])
+            diff = np.array(list(map(gaussian_function, spec_average)))
+            estimate = tf.add(estimate, diff)
+
+        # Adding original shape
+        on_exp = tf.complex(tf.zeros(accomp_phase.shape), accomp_phase)
+        on_est = tf.complex(estimate, tf.zeros(estimate.shape, dtype=tf.float32))
+        pred_spec = tf.multiply(on_est, tf.exp(on_exp))
+        # Getting sampled accomp spec
+        pred_spec = tf.reshape(pred_spec, orig_shape)
+        # Reconvert to time domain
+        pred_spec = tf.signal.inverse_stft(
+            pred_spec,
+            frame_length=self.config.cond_win,
+            frame_step=self.config.cond_hop,
+            window_fn=tf.signal.inverse_stft_window_fn(
+                self.config.cond_hop,
+                forward_window_fn=tf.signal.hann_window))
+        # Adding noise (accomp) to vocals
+        noised_voc = tf.add(vocals, pred_spec)
+        return noised_voc, pred_spec
+
+    def time_diffusion(self, vocals, accomp, alpha, alpha_bar):
+        """Trans to next state with diffusion process.
+        Args:
+            signal: tf.Tensor, [B, T], signal.
+            alpha_bar: Union[float, tf.Tensor: [B]], cumprod(1 -beta).
+            eps: Optional[tf.Tensor: [B, T]], noise.
+        Return:
+            tuple,
+                noised: tf.Tensor, [B, T], noised signal.
+                eps: tf.Tensor, [B, T], noise.
+        """
+        #stddev = np.sqrt((1 - alpha_bar / alpha) / (1 - alpha_bar) * (1 - alpha))
+        accomp = accomp.numpy()
+        eps = np.array([random.gauss(x, x/16) for x in accomp])
+        if isinstance(alpha_bar, tf.Tensor):
+            alpha_bar = tf.cast(alpha_bar, tf.float32)
+        return tf.sqrt(alpha_bar) * vocals + tf.sqrt(1 - alpha_bar) * eps, eps
+
+    def pred_noise(self, signal, timestep, cond=None):
         """Predict noise from signal.
         Args:
             signal: tf.Tensor, [B, T], noised signal.
@@ -77,7 +187,7 @@ class DiffWave(tf.keras.Model):
         Returns:
             tf.Tensor, [B, T], predicted noise.
         """
-        return self.wavenet(signal, timestep, mel)
+        return self.wavenet(signal, timestep, cond)
 
     def pred_signal(self, signal, eps, alpha, alpha_bar):
         """Compute mean and stddev of denoised signal.

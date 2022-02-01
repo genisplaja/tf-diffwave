@@ -1,15 +1,11 @@
 import tensorflow as tf
 
-from .ljspeech import LJSpeech
-
-
 class Config:
     """Configuration for dataset construction.
     """
     def __init__(self):
         # audio config
-        self.sr = LJSpeech.SR
-        self.maxval = LJSpeech.MAXVAL
+        self.sr = 22050
 
         # stft
         self.hop = 256
@@ -25,8 +21,8 @@ class Config:
         self.eps = 1e-5
 
         # sample size
-        self.frames = 6400  # 16000
-        self.batch = 8      # 16
+        self.frames = self.hop * 32  # 256 * X
+        self.batch = 8
 
     def window_fn(self):
         """Return window generator.
