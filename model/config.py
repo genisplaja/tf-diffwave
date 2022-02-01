@@ -1,10 +1,29 @@
+import tensorflow as tf
 import numpy as np
+
+from .unet_config import config as unet_config
 
 
 class Config:
     """Configuration for DiffWave implementation.
     """
     def __init__(self):
+        self.sr = 22050
+
+        self.cond_win = 1024
+        self.cond_hop = 256
+
+        # mel-scale filter bank
+        self.mel = 80
+        self.fmin = 0
+        self.fmax = 8000
+
+        self.eps = 1e-5
+
+        # sample size
+        self.frames = 256 * 32  # 16384
+        self.batch = 8
+
         # leaky relu coefficient
         self.leak = 0.4
 
@@ -15,9 +34,9 @@ class Config:
         self.embedding_factor = 4
 
         # upsampler config
-        self.upsample_stride = [16, 1]
+        self.upsample_stride = [4, 1]
         self.upsample_kernel = [32, 3]
-        self.upsample_layers = 2
+        self.upsample_layers = 4
         # computed hop size
         self.hop = self.upsample_stride[0] ** self.upsample_layers
 
@@ -34,22 +53,22 @@ class Config:
         self.noise_start = 1e-4
         self.noise_end = 0.05           # 0.02 for 200
 
-    def beta(self):
-        """Generate beta-sequence.
+        self.beta = np.linspace(
+            self.noise_start, self.noise_end, self.iter, dtype=np.float32)
+
+        #self.noise_ratio = 16
+
+    def window_fn(self):
+        """Return window generator.
         Returns:
-            List[float], [iter], beta values.
+            Callable, window function of tf.signal
+                , which corresponds to self.win_fn.
         """
         mapper = {
-            'linear': self._linear_sched,
+            'hann': tf.signal.hann_window,
+            'hamming': tf.signal.hamming_window
         }
-        if self.noise_policy not in mapper:
-            raise ValueError('invalid beta policy')
-        return mapper[self.noise_policy]()
-
-    def _linear_sched(self):
-        """Linearly generated noise.
-        Returns:
-            List[float], [iter], beta values.
-        """
-        return np.linspace(
-            self.noise_start, self.noise_end, self.iter, dtype=np.float32)
+        if self.win_fn in mapper:
+            return mapper[self.win_fn]
+        
+        raise ValueError('invalid window function: ' + self.win_fn)
