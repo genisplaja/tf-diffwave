@@ -154,6 +154,8 @@ class Block(tf.keras.Model):
             residual: tf.Tensor, [B, T, C], output tensor for residual connection.
             skip: tf.Tensor, [B, T, C], output tensor for skip connection.
         """
+        _, gammas, betas = self.cnn_control(cond)
+        inputs = self.FiLM_complex_layer()([inputs, gammas, betas])
         # [B, C]
         embedding = self.proj_embed(embedding)
         # [B, T, C]
@@ -183,9 +185,9 @@ class Block(tf.keras.Model):
             # avoid tile with the num of batch -> it is the same for both tensors
             # g = tf.tile(tf.expand_dims(gamma, 2), s)
             # b = tf.tile(tf.expand_dims(beta, 2), s)
-            g = tf.expand_dims(tf.transpose(gamma, [0, 2, 1]), -1)
-            b = tf.expand_dims(tf.transpose(beta, [0, 2, 1]), -1)
-            return tf.add(b, tf.multiply(x, g))
+            #g = tf.expand_dims(tf.transpose(gamma, [0, 2, 1]), -1)
+            #b = tf.expand_dims(tf.transpose(beta, [0, 2, 1]), -1)
+            return tf.add(beta, tf.multiply(x, gamma))
         return layers.Lambda(func)
 
 
@@ -248,23 +250,18 @@ class WaveNet(tf.keras.Model):
             embed = tf.nn.swish(proj(embed))
         # [B, T, M, 1], treat as 2D tensor.
         # Add dimension
-        if cond:
-            cond = cond[..., None]
-            #print('mel add dim', mel.shape)
-            for upsample in self.upsample:
-                cond = tf.nn.leaky_relu(upsample(cond), self.config.leak)
-            # [B, T, M]
-            cond = tf.squeeze(cond, axis=-1)
+        cond = cond[..., None]
+        #print('mel add dim', mel.shape)
+        for upsample in self.upsample:
+            cond = tf.nn.leaky_relu(upsample(cond), self.config.leak)
+        # [B, T, M]
+        cond = tf.squeeze(cond, axis=-1)
 
         context = []
         for block in self.blocks:
             # [B, T, C], [B, T, C]
-            if cond:
-                x, skip = block(x, embed, cond)
-                context.append(skip)
-            else:
-                x, skip = block(x, embed)
-                context.append(skip)
+            x, skip = block(x, embed, cond)
+            context.append(skip)
         # [B, T, C]
         scale = self.config.num_layers ** 0.5
         context = tf.reduce_sum(context, axis=0) / scale

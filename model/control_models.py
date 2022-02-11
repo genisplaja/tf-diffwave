@@ -62,7 +62,7 @@ class CNNControl(tf.keras.Model):
         input_conditions = Input(shape=(config.Z_DIM[0], config.Z_DIM[1]))
         '''
         cnn_enc = self.cnn_block(
-            self.input_conditions, self.n_filters, config.Z_DIM, config.PADDING, self.initializer)
+            input_conditions, self.n_filters, config.Z_DIM, config.PADDING, self.initializer)
         # cnn_dec = cnn_block(
         #     input_conditions, n_filters, config.Z_DIM, config.PADDING, initializer
         # )
@@ -76,6 +76,7 @@ class CNNControl(tf.keras.Model):
         return input_conditions, gammas, betas
         
     # DO 2D Condition Change Here
+    @staticmethod
     def cnn_block(
         x, n_filters, kernel_size, padding, initializer, activation='relu'):
         

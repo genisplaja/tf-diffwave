@@ -33,8 +33,8 @@ class DiffWave(tf.keras.Model):
                 signal: tf.Tensor, [B, T], predicted output.
                 ir: List[np.ndarray: [B, T]], intermediate outputs.
         """
-        alpha = 1 - self.config.beta
-        alpha_bar = np.cumprod(alpha)
+        #alpha = 1 - self.config.beta
+        #alpha_bar = np.cumprod(alpha)
         base = tf.ones([tf.shape(mixture)[0]], dtype=tf.int32)
 
         ir, signal = [], mixture
@@ -42,15 +42,15 @@ class DiffWave(tf.keras.Model):
             # [B, T]
             eps = self.pred_noise(signal, base * t, cond)
             # [B, T], []
-            mu, sigma = self.pred_signal(signal, eps, alpha[t - 1], alpha_bar[t - 1])
-            #signal = tf.subtract(signal, eps)
+            #mu, sigma = self.pred_signal(signal, eps, alpha[t - 1], alpha_bar[t - 1])
+            signal = tf.subtract(signal, eps)
             # [B, T]
-            signal = mu + tf.random.normal(tf.shape(signal)) * sigma
+            #signal = mu + tf.random.normal(tf.shape(signal)) * sigma
             ir.append(signal.numpy())
         # [B, T], iter x [B, T]
         return signal, ir
 
-    def diffusion(self, vocals, accomp, noise_idx, alpha, alpha_bar):
+    def diffusion(self, vocals, accomp, noise_idx):
         """Trans to next state with diffusion process.
         Args:
             signal: tf.Tensor, [B, T], signal.
@@ -61,51 +61,11 @@ class DiffWave(tf.keras.Model):
                 noised: tf.Tensor, [B, T], noised signal.
                 eps: tf.Tensor, [B, T], noise.
         """
-        conditioning = lambda v, w, x, y, z : self.soft_diffusion(v, w, x, y, z)
-        diff = list(map(conditioning, vocals, accomp, noise_idx, alpha, alpha_bar))
+        conditioning = lambda x, y, z : self.fast_diffusion(x, y, z)
+        diff = list(map(conditioning, vocals, accomp, noise_idx))
         return np.array(diff)[:, 0, :], np.array(diff)[:, 1, :]
-        
-    def sample_diffusion(self, vocals, accomp, alpha):
-        """Trans to next state with diffusion process.
-        Args:
-            signal: tf.Tensor, [B, T], signal.
-            alpha_bar: Union[float, tf.Tensor: [B]], cumprod(1 -beta).
-            eps: Optional[tf.Tensor: [B, T]], noise.
-        Return:
-            tuple,
-                noised: tf.Tensor, [B, T], noised signal.
-                eps: tf.Tensor, [B, T], noise.
-        """
-        accomp_spec = tf.signal.stft(
-            accomp,
-            frame_length=self.config.cond_win,
-            frame_step=self.config.cond_hop,
-            fft_length=self.config.cond_win,
-            window_fn=tf.signal.hann_window)
-        orig_shape = accomp_spec.shape
-        accomp_spec = tf.reshape(accomp_spec, orig_shape[0]*orig_shape[1])
-        mask = np.zeros(orig_shape[0]*orig_shape[1], dtype='complex')
-        # Obtaining sampling mask
-        samples = list(random.sample(
-            list(np.arange(orig_shape[0]*orig_shape[1])),
-            int(math.floor((orig_shape[0]*orig_shape[1])/self.config.iter) * alpha)))
-        for idx in samples:
-            mask[idx] = 1.0 + 1.0j
-        # Getting sampled accomp spec
-        accomp = tf.reshape(tf.math.multiply(accomp_spec, mask), orig_shape)
-        # Reconvert to time domain
-        accomp = tf.signal.inverse_stft(
-            accomp,
-            frame_length=self.config.cond_win,
-            frame_step=self.config.cond_hop,
-            window_fn=tf.signal.inverse_stft_window_fn(
-                self.config.cond_hop,
-                forward_window_fn=tf.signal.hann_window))
-        # Adding noise (accomp) to vocals
-        noised_voc = tf.add(vocals, accomp)
-        return noised_voc, accomp
 
-    def soft_diffusion(self, vocals, accomp, noise_idx, alpha, alpha_bar):
+    def soft_diffusion(self, vocals, accomp, noise_idx):
         """Trans to next state with diffusion process.
         Args:
             signal: tf.Tensor, [B, T], signal.
@@ -116,7 +76,7 @@ class DiffWave(tf.keras.Model):
                 noised: tf.Tensor, [B, T], noised signal.
                 eps: tf.Tensor, [B, T], noise.
         """
-        stddev = np.sqrt((1 - alpha_bar / alpha) / (1 - alpha_bar) * (1 - alpha))
+        #stddev = np.sqrt((1 - alpha_bar / alpha) / (1 - alpha_bar) * (1 - alpha))
         accomp_spec = tf.signal.stft(
             accomp,
             frame_length=self.config.cond_win,
@@ -132,20 +92,63 @@ class DiffWave(tf.keras.Model):
         accomp_phase = tf.reshape(accomp_phase, orig_shape[0]*orig_shape[1])
         #approximately how would the average spectrogram look at each step
         spec_average = accomp_mag.numpy()/self.config.iter
-        estimate = tf.zeros(orig_shape[0]*orig_shape[1])
+        estimate = np.zeros(orig_shape[0]*orig_shape[1])
 
-        gaussian_function = lambda x : random.gauss(x, stddev)
+        gaussian_function = lambda x : random.gauss(x, x/self.config.noise_ratio)
         for _ in range(noise_idx):
             #generate an estimate around the average, the standard deviation controls the amount of noise
             #estimate += np.array([random.gauss(spec_average[i],spec_average[i]/self.config.noise_ratio) \
             #    for i in range(orig_shape[0]*orig_shape[1])])
             diff = np.array(list(map(gaussian_function, spec_average)))
-            estimate = tf.add(estimate, diff)
-
-        # Adding original shape
+            estimate += diff
+        # Adding a bit of noise
+        estimate = np.array(estimate + 0.1*np.random.normal(0, 1/2, [len(estimate)]), dtype=np.float32)
+        # Adding original phase
         on_exp = tf.complex(tf.zeros(accomp_phase.shape), accomp_phase)
         on_est = tf.complex(estimate, tf.zeros(estimate.shape, dtype=tf.float32))
         pred_spec = tf.multiply(on_est, tf.exp(on_exp))
+        # Getting sampled accomp spec
+        pred_spec = tf.reshape(pred_spec, orig_shape)
+        # Reconvert to time domain
+        pred_spec = tf.signal.inverse_stft(
+            pred_spec,
+            frame_length=self.config.cond_win,
+            frame_step=self.config.cond_hop,
+            window_fn=tf.signal.inverse_stft_window_fn(
+                self.config.cond_hop,
+                forward_window_fn=tf.signal.hann_window))
+        # Adding noise (accomp) to vocals
+        noised_voc = tf.add(vocals, pred_spec)
+        return noised_voc, pred_spec
+
+    def fast_diffusion(self, vocals, accomp, noise_idx):
+        accomp_spec = tf.signal.stft(
+            accomp,
+            frame_length=self.config.cond_win,
+            frame_step=self.config.cond_hop,
+            fft_length=self.config.cond_win,
+            window_fn=tf.signal.hann_window)
+        accomp_mag = tf.abs(accomp_spec)
+        accomp_phase = tf.math.angle(accomp_spec)
+        orig_shape = accomp_mag.shape
+        # Flatenning spec
+        accomp_mag = tf.reshape(accomp_mag, orig_shape[0]*orig_shape[1])
+        accomp_phase = tf.reshape(accomp_phase, orig_shape[0]*orig_shape[1])
+
+        #sum_amplitude = tf.math.reduce_sum(accomp_mag)
+        mean_amplitude = tf.math.reduce_mean(accomp_mag)
+        #noise = tf.random.normal(accomp_mag.shape, 0, self.config.noise_std*mean_amplitude/N)
+
+        N = self.config.iter * 1.0
+        noise_idx = noise_idx.numpy() * 1.0
+
+        pred_spec = tf.math.minimum(accomp_mag,tf.maximum(0,noise_idx*accomp_mag/N + tf.math.abs(tf.random.normal(accomp_mag.shape,0, self.config.noise_std*mean_amplitude/N))))
+        #spec_nextstep_independent = tf.math.minimum(accomp_mag,tf.maximum(0,(noise_idx+1)*accomp_mag/N + tf.math.abs(tf.random.normal(accomp_mag.shape,0, self.config.noise_std*mean_amplitude/N))))
+        #spec_nextstep = tf.math.minimum(accomp_mag,tf.maximum(0,pred_spec + tf.math.abs(tf.random.normal(accomp_mag.shape,0, self.config.noise_std*mean_amplitude/N))))
+
+        on_exp = tf.complex(tf.zeros(accomp_phase.shape), accomp_phase)
+        pred_spec = tf.complex(pred_spec, tf.zeros(pred_spec.shape, dtype=tf.float32))
+        pred_spec = tf.multiply(pred_spec, tf.exp(on_exp))
         # Getting sampled accomp spec
         pred_spec = tf.reshape(pred_spec, orig_shape)
         # Reconvert to time domain
@@ -170,24 +173,6 @@ class DiffWave(tf.keras.Model):
             tf.Tensor, [B, T], predicted noise.
         """
         return self.wavenet(signal, timestep, cond)
-
-    def pred_signal(self, signal, eps, alpha, alpha_bar):
-        """Compute mean and stddev of denoised signal.
-        Args:
-            signal: tf.Tensor, [B, T], noised signal.
-            eps: tf.Tensor, [B, T], estimated noise.
-            alpha: float, 1 - beta.
-            alpha_bar: float, cumprod(1 - beta).
-        Returns:
-            tuple,
-                mean: tf.Tensor, [B, T], estimated mean of denoised signal.
-                stddev: float, estimated stddev.
-        """
-        # [B, T]
-        mean = (signal - (1 - alpha) / np.sqrt(1 - alpha_bar) * eps) / np.sqrt(alpha)
-        # []
-        stddev = np.sqrt((1 - alpha_bar / alpha) / (1 - alpha_bar) * (1 - alpha))
-        return mean, stddev
 
     def write(self, path, optim=None):
         """Write checkpoint with `tf.train.Checkpoint`.

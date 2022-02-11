@@ -21,8 +21,8 @@ class Config:
         self.eps = 1e-5
 
         # sample size
-        self.frames = 256 * 32  # 16384
-        self.batch = 8
+        self.frames = 256 * 24  # 16384
+        self.batch = 4
 
         # leaky relu coefficient
         self.leak = 0.4
@@ -48,15 +48,16 @@ class Config:
         self.num_cycles = 3
 
         # noise schedule
-        self.iter = 20                  # 20, 40, 50
+        self.iter = 50                  # 20, 40, 50
         self.noise_policy = 'linear'
         self.noise_start = 1e-4
         self.noise_end = 0.05           # 0.02 for 200
 
-        self.beta = np.linspace(
-            self.noise_start, self.noise_end, self.iter, dtype=np.float32)
+        #self.beta = np.linspace(
+        #    self.noise_start, self.noise_end, self.iter, dtype=np.float32)
 
-        #self.noise_ratio = 16
+        self.noise_ratio = 16
+        self.noise_std = 1
 
     def window_fn(self):
         """Return window generator.

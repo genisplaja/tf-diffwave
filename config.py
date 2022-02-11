@@ -9,7 +9,7 @@ class TrainConfig:
     def __init__(self):
         # optimizer
         self.lr_policy = 'fixed'
-        self.learning_rate = 0.00025
+        self.learning_rate = 0.0005
         # self.lr_policy = 'noam'
         # self.learning_rate = 1
         # self.lr_params = {
@@ -28,12 +28,12 @@ class TrainConfig:
         self.epoch = 1000
 
         # path config
-        self.log = '/home/genis/diffwave_experiments/source_sep_20_soft/log'
-        self.ckpt = '/home/genis/diffwave_experiments/source_sep_20_soft/ckpt'
-        self.sounds = '/home/genis/diffwave_experiments/source_sep_20_soft/sounds'
+        self.log = '/home/genis/diffwave_experiments/source_sep_50_cond/log'
+        self.ckpt = '/home/genis/diffwave_experiments/source_sep_50_condt/ckpt'
+        self.sounds = '/home/genis/diffwave_experiments/source_sep_50_cond/sounds'
 
         # model name
-        self.name = 'pred_signal'
+        self.name = 'l1'
 
         # interval configuration
         self.eval_intval = 5000
