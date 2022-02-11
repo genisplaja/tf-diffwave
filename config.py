@@ -33,7 +33,7 @@ class TrainConfig:
         self.sounds = '/home/genis/diffwave_experiments/source_sep_20_soft/sounds'
 
         # model name
-        self.name = 'pred_signal'
+        self.name = 'l1'
 
         # interval configuration
         self.eval_intval = 5000

@@ -24,7 +24,7 @@ warnings.filterwarnings('ignore')
 
 #os.environ["TF_GPU_ALLOCATOR"] = "cuda_malloc_async"
 
-DATA_DIR =  '/media/genis/genis/musdb18hq/musdb-accomp-4sec/'
+DATA_DIR =  '/media/genis/musdb18hq/musdb-accomp-4sec/'
 
 class Trainer:
     """WaveGrad trainer.
@@ -313,7 +313,7 @@ if __name__ == '__main__':
     log_path = os.path.join(config.train.log, config.train.name)
     if not os.path.exists(log_path):
         os.makedirs(log_path)
-    
+    print('hola') 
     ckpt_path = os.path.join(config.train.ckpt, config.train.name)
     if not os.path.exists(ckpt_path):
         os.makedirs(ckpt_path)
@@ -329,11 +329,9 @@ if __name__ == '__main__':
     if args.load_step > 0:
         super_path = os.path.join(config.train.ckpt, config.train.name)
         ckpt_path = '{}_{}.ckpt'.format(config.train.name, args.load_step)
-        ckpt_path = next(
-            name for name in os.listdir(super_path)
-                 if name.startswith(ckpt_path) and name.endswith('.index'))
+        print(os.listdir(super_path))
+        ckpt_path = next(name for name in os.listdir(super_path) if name.startswith(ckpt_path) and name.endswith('.index'))
         ckpt_path = os.path.join(super_path, ckpt_path[:-6])
-        
         print('[*] load checkpoint: ' + ckpt_path)
         trainer.model.restore(ckpt_path, trainer.optim)
 
