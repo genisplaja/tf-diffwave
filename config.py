@@ -9,7 +9,7 @@ class TrainConfig:
     def __init__(self):
         # optimizer
         self.lr_policy = 'fixed'
-        self.learning_rate = 0.0005
+        self.learning_rate = 0.0003
         # self.lr_policy = 'noam'
         # self.learning_rate = 1
         # self.lr_params = {
@@ -29,7 +29,7 @@ class TrainConfig:
 
         # path config
         self.log = '/home/genis/diffwave_experiments/source_sep_50_cond/log'
-        self.ckpt = '/home/genis/diffwave_experiments/source_sep_50_condt/ckpt'
+        self.ckpt = '/home/genis/diffwave_experiments/source_sep_50_cond/ckpt'
         self.sounds = '/home/genis/diffwave_experiments/source_sep_50_cond/sounds'
 
         # model name

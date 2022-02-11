@@ -21,7 +21,7 @@ class Config:
         self.eps = 1e-5
 
         # sample size
-        self.frames = self.hop * 24  # 256 * X
+        self.frames = self.hop * 20  # 256 * X
         self.batch = 4
 
     def window_fn(self):

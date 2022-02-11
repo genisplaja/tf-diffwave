@@ -21,7 +21,7 @@ class Config:
         self.eps = 1e-5
 
         # sample size
-        self.frames = 256 * 24  # 16384
+        self.frames = 256 * 20  # 16384
         self.batch = 4
 
         # leaky relu coefficient
@@ -48,7 +48,7 @@ class Config:
         self.num_cycles = 3
 
         # noise schedule
-        self.iter = 50                  # 20, 40, 50
+        self.iter = 20                  # 20, 40, 50
         self.noise_policy = 'linear'
         self.noise_start = 1e-4
         self.noise_end = 0.05           # 0.02 for 200
