@@ -66,7 +66,6 @@ class Trainer:
         self.ckpt_path = os.path.join(
             config.train.ckpt, config.train.name, config.train.name)
 
-        self.alpha_bar = np.cumprod(1 - config.model.beta())
         self.cmap = tf.constant(plt.get_cmap('viridis').colors, dtype=tf.float32)
 
         self.loss_path = config.train.log.replace('/log', '/loss.txt')
