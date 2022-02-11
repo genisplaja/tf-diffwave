@@ -24,6 +24,7 @@ warnings.filterwarnings('ignore')
 
 #os.environ["TF_GPU_ALLOCATOR"] = "cuda_malloc_async"
 
+
 DATA_DIR =  '/media/genis/musdb18hq/musdb-accomp-4sec/'
 
 class Trainer:
@@ -65,11 +66,10 @@ class Trainer:
         self.ckpt_path = os.path.join(
             config.train.ckpt, config.train.name, config.train.name)
 
-        self.alpha = 1 - config.model.beta
-        self.alpha_bar = np.cumprod(1 - config.model.beta)
+        self.alpha_bar = np.cumprod(1 - config.model.beta())
         self.cmap = tf.constant(plt.get_cmap('viridis').colors, dtype=tf.float32)
 
-        self.loss_path = os.path.join(config.train.ckpt, config.train.name, 'loss.txt')
+        self.loss_path = config.train.log.replace('/log', '/loss.txt')
 
     def compute_loss(self, vocals, accomp, f0_cond=None):
         """Compute loss for noise estimation.
@@ -86,15 +86,13 @@ class Trainer:
         timesteps = tf.random.uniform(
             [bsize], 1, self.config.model.iter + 1, dtype=tf.int32)
         # [B]
-        noise_index = timesteps - 1
-        # [B]
-        noise_alpha = tf.gather(self.alpha, noise_index)
-        noise_alpha_bar = tf.gather(self.alpha_bar, noise_index)
+        #noise_steps = np.array([self.config.model.alpha_list[x] for x in noise_level])
+        # [B, T], [B, T]
+        noise_level = timesteps - 1
         # [B]
         #noise_steps = np.array([self.config.model.alpha_list[x] for x in noise_level])
         # [B, T], [B, T]
-        noised, noise = self.model.diffusion(
-            vocals, accomp, noise_index, noise_alpha, noise_alpha_bar)
+        noised, noise = self.model.diffusion(vocals, accomp, noise_level)
         # [B, T]
         eps = self.model.pred_noise(noised, timesteps, f0_cond)
         # []
@@ -240,7 +238,7 @@ class Trainer:
                 #    sf.write(filename.replace('iter', 'avg_iter'), pred_avg, 22050)
                 if count == 1:
                     sf.write(filename.replace('iter', 'gt_iter'), voc_gt, 22050)
-                
+
                 #for i in range(0, len(ir), ir_unit):
                 #    tf.summary.audio(
                 #        'ir_{}'.format(i),
@@ -249,7 +247,7 @@ class Trainer:
                 
                 del mix_gt, voc_gt, pred
             
-            count += 1 
+            count += 1
 
     def eval(self):
         """Generate evaluation purpose audio.
@@ -279,7 +277,7 @@ class Trainer:
         #return mixture, speech, pred, ir
         vocals = tf.squeeze(vocals, axis=0).numpy()
         mixture = tf.squeeze(mixture, axis=0).numpy()
-        est_loss = tf.abs(np.sum(vocals - pred) / pred.shape[0])
+        est_loss = np.abs(np.sum(vocals - pred) / pred.shape[0])
         print('Estimation loss:', est_loss.numpy())
         print('Max/min/mean vocals: ', tf.reduce_max(vocals).numpy(), tf.reduce_min(vocals).numpy(), tf.reduce_mean(vocals).numpy())
         print('Mix/min/mean prediction: ', tf.reduce_max(pred).numpy(), tf.reduce_min(pred).numpy(), tf.reduce_mean(pred).numpy())
@@ -313,7 +311,6 @@ if __name__ == '__main__':
     log_path = os.path.join(config.train.log, config.train.name)
     if not os.path.exists(log_path):
         os.makedirs(log_path)
-    print('hola') 
     ckpt_path = os.path.join(config.train.ckpt, config.train.name)
     if not os.path.exists(ckpt_path):
         os.makedirs(ckpt_path)
@@ -329,8 +326,9 @@ if __name__ == '__main__':
     if args.load_step > 0:
         super_path = os.path.join(config.train.ckpt, config.train.name)
         ckpt_path = '{}_{}.ckpt'.format(config.train.name, args.load_step)
-        print(os.listdir(super_path))
-        ckpt_path = next(name for name in os.listdir(super_path) if name.startswith(ckpt_path) and name.endswith('.index'))
+        ckpt_path = next(
+            name for name in os.listdir(super_path)
+                 if name.startswith(ckpt_path) and name.endswith('.index'))
         ckpt_path = os.path.join(super_path, ckpt_path[:-6])
         print('[*] load checkpoint: ' + ckpt_path)
         trainer.model.restore(ckpt_path, trainer.optim)

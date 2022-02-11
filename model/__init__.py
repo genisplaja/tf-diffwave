@@ -33,8 +33,6 @@ class DiffWave(tf.keras.Model):
                 signal: tf.Tensor, [B, T], predicted output.
                 ir: List[np.ndarray: [B, T]], intermediate outputs.
         """
-        alpha = 1 - self.config.beta
-        alpha_bar = np.cumprod(alpha)
         base = tf.ones([tf.shape(mixture)[0]], dtype=tf.int32)
 
         ir, signal = [], mixture
@@ -42,15 +40,15 @@ class DiffWave(tf.keras.Model):
             # [B, T]
             eps = self.pred_noise(signal, base * t, cond)
             # [B, T], []
-            mu, sigma = self.pred_signal(signal, eps, alpha[t - 1], alpha_bar[t - 1])
-            #signal = tf.subtract(signal, eps)
+            #signal = self.pred_signal(signal, eps)
+            signal = tf.subtract(signal, eps)
             # [B, T]
-            signal = mu + tf.random.normal(tf.shape(signal)) * sigma
+            #signal = mu + tf.random.normal(tf.shape(signal)) * sigma
             ir.append(signal.numpy())
         # [B, T], iter x [B, T]
         return signal, ir
 
-    def diffusion(self, vocals, accomp, noise_idx, alpha, alpha_bar):
+    def diffusion(self, vocals, accomp, alpha):
         """Trans to next state with diffusion process.
         Args:
             signal: tf.Tensor, [B, T], signal.
@@ -61,10 +59,10 @@ class DiffWave(tf.keras.Model):
                 noised: tf.Tensor, [B, T], noised signal.
                 eps: tf.Tensor, [B, T], noise.
         """
-        conditioning = lambda v, w, x, y, z : self.soft_diffusion(v, w, x, y, z)
-        diff = list(map(conditioning, vocals, accomp, noise_idx, alpha, alpha_bar))
+        conditioning = lambda x, y, z : self.soft_diffusion(x, y, z)
+        diff = list(map(conditioning, vocals, accomp, alpha))
         return np.array(diff)[:, 0, :], np.array(diff)[:, 1, :]
-        
+
     def sample_diffusion(self, vocals, accomp, alpha):
         """Trans to next state with diffusion process.
         Args:
@@ -105,7 +103,7 @@ class DiffWave(tf.keras.Model):
         noised_voc = tf.add(vocals, accomp)
         return noised_voc, accomp
 
-    def soft_diffusion(self, vocals, accomp, noise_idx, alpha, alpha_bar):
+    def soft_diffusion(self, vocals, accomp, alpha):
         """Trans to next state with diffusion process.
         Args:
             signal: tf.Tensor, [B, T], signal.
@@ -116,7 +114,6 @@ class DiffWave(tf.keras.Model):
                 noised: tf.Tensor, [B, T], noised signal.
                 eps: tf.Tensor, [B, T], noise.
         """
-        stddev = np.sqrt((1 - alpha_bar / alpha) / (1 - alpha_bar) * (1 - alpha))
         accomp_spec = tf.signal.stft(
             accomp,
             frame_length=self.config.cond_win,
@@ -134,14 +131,13 @@ class DiffWave(tf.keras.Model):
         spec_average = accomp_mag.numpy()/self.config.iter
         estimate = tf.zeros(orig_shape[0]*orig_shape[1])
 
-        gaussian_function = lambda x : random.gauss(x, stddev)
-        for _ in range(noise_idx):
+        gaussian_function = lambda x : random.gauss(x, x/self.config.noise_ratio)
+        for _ in range(alpha):
             #generate an estimate around the average, the standard deviation controls the amount of noise
             #estimate += np.array([random.gauss(spec_average[i],spec_average[i]/self.config.noise_ratio) \
             #    for i in range(orig_shape[0]*orig_shape[1])])
             diff = np.array(list(map(gaussian_function, spec_average)))
             estimate = tf.add(estimate, diff)
-
         # Adding original shape
         on_exp = tf.complex(tf.zeros(accomp_phase.shape), accomp_phase)
         on_est = tf.complex(estimate, tf.zeros(estimate.shape, dtype=tf.float32))
@@ -170,24 +166,6 @@ class DiffWave(tf.keras.Model):
             tf.Tensor, [B, T], predicted noise.
         """
         return self.wavenet(signal, timestep, cond)
-
-    def pred_signal(self, signal, eps, alpha, alpha_bar):
-        """Compute mean and stddev of denoised signal.
-        Args:
-            signal: tf.Tensor, [B, T], noised signal.
-            eps: tf.Tensor, [B, T], estimated noise.
-            alpha: float, 1 - beta.
-            alpha_bar: float, cumprod(1 - beta).
-        Returns:
-            tuple,
-                mean: tf.Tensor, [B, T], estimated mean of denoised signal.
-                stddev: float, estimated stddev.
-        """
-        # [B, T]
-        mean = (signal - (1 - alpha) / np.sqrt(1 - alpha_bar) * eps) / np.sqrt(alpha)
-        # []
-        stddev = np.sqrt((1 - alpha_bar / alpha) / (1 - alpha_bar) * (1 - alpha))
-        return mean, stddev
 
     def write(self, path, optim=None):
         """Write checkpoint with `tf.train.Checkpoint`.

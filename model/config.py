@@ -50,8 +50,13 @@ class Config:
         # noise schedule
         self.iter = 20                  # 20, 40, 50
         self.noise_policy = 'linear'
-        self.noise_start = 1e-4
-        self.noise_end = 0.05           # 0.02 for 200
+        self.noise_start = 0
+        self.noise_end = 1           # 0.02 for 200
+
+        self.alpha_list = np.linspace(
+            self.noise_start, self.noise_end, self.iter, dtype=np.float32)
+
+        self.noise_ratio = 16
 
         self.beta = np.linspace(
             self.noise_start, self.noise_end, self.iter, dtype=np.float32)
@@ -68,7 +73,14 @@ class Config:
             'hann': tf.signal.hann_window,
             'hamming': tf.signal.hamming_window
         }
-        if self.win_fn in mapper:
-            return mapper[self.win_fn]
-        
-        raise ValueError('invalid window function: ' + self.win_fn)
+        if self.noise_policy not in mapper:
+            raise ValueError('invalid beta policy')
+        return mapper[self.noise_policy]()
+
+    def _linear_sched(self):
+        """Linearly generated noise.
+        Returns:
+            List[float], [iter], beta values.
+        """
+        return np.linspace(
+            self.noise_start, self.noise_end, self.iter, dtype=np.float32)
