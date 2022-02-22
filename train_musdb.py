@@ -277,7 +277,7 @@ class Trainer:
         vocals = tf.squeeze(vocals, axis=0).numpy()
         mixture = tf.squeeze(mixture, axis=0).numpy()
         est_loss = np.abs(np.sum(vocals - pred) / pred.shape[0])
-        print('Estimation loss:', est_loss.numpy())
+        print('Estimation loss:', est_loss)
         print('Max/min/mean vocals: ', tf.reduce_max(vocals).numpy(), tf.reduce_min(vocals).numpy(), tf.reduce_mean(vocals).numpy())
         print('Mix/min/mean prediction: ', tf.reduce_max(pred).numpy(), tf.reduce_min(pred).numpy(), tf.reduce_mean(pred).numpy())
         return mixture, vocals, pred
