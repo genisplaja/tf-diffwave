@@ -28,9 +28,9 @@ class TrainConfig:
         self.epoch = 1000
 
         # path config
-        self.log = '/home/genis/diffwave_experiments/source_sep_50_cond/log'
-        self.ckpt = '/home/genis/diffwave_experiments/source_sep_50_cond/ckpt'
-        self.sounds = '/home/genis/diffwave_experiments/source_sep_50_cond/sounds'
+        self.log = '/mnt/sda1/genis/diffwave_experiments/source_sep_50_cond/log'
+        self.ckpt = '/mnt/sda1/genis/diffwave_experiments/source_sep_50_cond/ckpt'
+        self.sounds = '/mnt/sda1/genis/diffwave_experiments/source_sep_50_cond/sounds'
 
         # model name
         self.name = 'l1'

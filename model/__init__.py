@@ -61,7 +61,7 @@ class DiffWave(tf.keras.Model):
                 noised: tf.Tensor, [B, T], noised signal.
                 eps: tf.Tensor, [B, T], noise.
         """
-        conditioning = lambda x, y, z : self.fast_diffusion(x, y, z)
+        conditioning = lambda x, y, z : self.soft_diffusion(x, y, z)
         diff = list(map(conditioning, vocals, accomp, noise_idx))
         return np.array(diff)[:, 0, :], np.array(diff)[:, 1, :]
 

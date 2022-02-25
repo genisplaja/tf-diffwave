@@ -24,7 +24,7 @@ warnings.filterwarnings('ignore')
 
 #os.environ["TF_GPU_ALLOCATOR"] = "cuda_malloc_async"
 
-DATA_DIR =  '/media/genis/musdb18hq/musdb-accomp-4sec/'
+DATA_DIR =  '/mnt/sda1/genis/musdb-accomp-4sec/'
 
 class Trainer:
     """WaveGrad trainer.
@@ -174,11 +174,11 @@ class Trainer:
             train_loss = []
             with tqdm.tqdm(total=self.split, leave=False) as pbar:
                 for _, vocal, accomp in self.trainset:
-                    f0_cond = self.get_f0_conditions(vocal.numpy())
+                    #f0_cond = self.get_f0_conditions(vocal.numpy())
                     with tf.GradientTape() as tape:
                         tape.watch(self.model.trainable_variables)
-                        loss = self.compute_loss(vocal, accomp, f0_cond)
-                        #loss = self.compute_loss(vocal, accomp)
+                        #loss = self.compute_loss(vocal, accomp, f0_cond)
+                        loss = self.compute_loss(vocal, accomp)
                         train_loss.append(loss)
 
                     grad = tape.gradient(loss, self.model.trainable_variables)
@@ -213,9 +213,9 @@ class Trainer:
             print('\nTrain loss:', str(round(train_loss.numpy(),5)))
             loss = []
             for _, vocal, accomp in self.testset:
-                f0_cond = self.get_f0_conditions(vocal.numpy())
-                actual_loss = self.compute_loss(vocal, accomp, f0_cond).numpy().item()
-                #actual_loss = self.compute_loss(vocal, accomp).numpy().item()
+                #f0_cond = self.get_f0_conditions(vocal.numpy())
+                #actual_loss = self.compute_loss(vocal, accomp, f0_cond).numpy().item()
+                actual_loss = self.compute_loss(vocal, accomp).numpy().item()
                 loss.append(actual_loss)
                 
             loss = sum(loss) / len(loss)
@@ -270,12 +270,12 @@ class Trainer:
         vocals = vocals[:, :nearest_hop]
 
         # Compute condition
-        f0_cond = self.get_f0_conditions(vocals.numpy())
+        #f0_cond = self.get_f0_conditions(vocals.numpy())
 
         # If more than 1 repetition: compute several and average
         # Else: taking single prediction
-        pred, _ = self.model(mixture, f0_cond)
-        #pred, _ = self.model(mixture)
+        #pred, _ = self.model(mixture, f0_cond)
+        pred, _ = self.model(mixture)
         pred = tf.squeeze(pred, axis=0).numpy()
         #return mixture, speech, pred, ir
         vocals = tf.squeeze(vocals, axis=0).numpy()

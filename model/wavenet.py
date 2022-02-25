@@ -154,8 +154,8 @@ class Block(tf.keras.Model):
             residual: tf.Tensor, [B, T, C], output tensor for residual connection.
             skip: tf.Tensor, [B, T, C], output tensor for skip connection.
         """
-        _, gammas, betas = self.cnn_control(cond)
-        inputs = self.FiLM_complex_layer()([inputs, gammas, betas])
+        #_, gammas, betas = self.cnn_control(cond)
+        #inputs = self.FiLM_complex_layer()([inputs, gammas, betas])
         # [B, C]
         embedding = self.proj_embed(embedding)
         # [B, T, C]
@@ -250,12 +250,12 @@ class WaveNet(tf.keras.Model):
             embed = tf.nn.swish(proj(embed))
         # [B, T, M, 1], treat as 2D tensor.
         # Add dimension
-        cond = cond[..., None]
+        #cond = cond[..., None]
         #print('mel add dim', mel.shape)
-        for upsample in self.upsample:
-            cond = tf.nn.leaky_relu(upsample(cond), self.config.leak)
+        #for upsample in self.upsample:
+        #    cond = tf.nn.leaky_relu(upsample(cond), self.config.leak)
         # [B, T, M]
-        cond = tf.squeeze(cond, axis=-1)
+        #cond = tf.squeeze(cond, axis=-1)
 
         context = []
         for block in self.blocks:
